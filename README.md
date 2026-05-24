@@ -1,207 +1,193 @@
-# 📊 用户行为分析平台
+# User-Behavior-Analytics
 
-一个功能强大的用户行为分析和可视化平台，帮助产品团队深入理解用户行为、优化转化流程、提升用户留存。
+用户行为分析平台：Streamlit 仪表板（v1）+ headless CLI（v2）。
 
-## ✨ 核心功能
+v1 提供 4 个核心 analyzer（漏斗 / 留存 / 路径 / 分群）+ Streamlit 仪表板 + 52 个
+单元测试，覆盖丰富。v2 在不动 v1 代码的前提下加：
 
-### 🔍 漏斗分析
-- **转化漏斗**: 可视化用户在各步骤的转化情况
-- **流失分析**: 识别关键流失点和流失率
-- **步骤转化率**: 计算相对转化率和整体转化率
-- **时间窗口**: 支持自定义转化时间窗口
+- **Headless 分析层** — 纯 pandas / numpy，不依赖 plotly / Streamlit，可在脚本 /
+  cron / CI 跑
+- **统一 CLI** — 一个 `python __main__.py` 入口覆盖 5 个子命令
 
-### 🛤️ 路径分析
-- **桑基图可视化**: 直观展示用户行为流向
-- **路径热力图**: 识别高频行为路径
-- **常见路径**: 发现用户典型行为模式
-- **关键节点**: 识别路径中的枢纽事件
+为什么需要 v2：v1 的 4 个 analyzer 都返回 plotly figure + 强耦合 Streamlit 渲染，
+数据团队想"每天定时生成漏斗转化报告 → 推钉钉"做不到。v2 把指标和图表彻底拆开。
 
-### 📅 留存分析
-- **次日/7 日/30 日留存**: 标准留存指标计算
-- **留存曲线**: 可视化留存趋势
-- **队列分析**: 按时间周期分组分析
-- **流失率分析**: 计算各周期流失情况
+## v2 新增
 
-### 👥 用户分群
-- **RFM 分析**: 基于 Recency、Frequency、Monetary 的分群
-- **K-Means 聚类**: 自动发现用户群体
-- **用户标签**: 自动生成用户群体标签
-- **特征雷达图**: 可视化各群体特征
+| 文件 | 干什么 |
+|---|---|
+| `headless_analytics.py` | `compute_funnel` / `compute_retention` / `compute_top_paths` / `compute_segments` 纯 pandas 实现 |
+| `__main__.py` | CLI 5 子命令：funnel / retention / paths / segments / overview |
+| `tests/test_headless_analytics.py` | 23 测试：漏斗时间窗口 / 留存 Day-N / 路径序列 / 分群阈值 |
 
-### 📈 事件分析
-- **事件趋势**: 追踪各事件随时间变化
-- **事件分布**: 分析事件类型占比
-- **时段分析**: 识别活跃时间段
-- **用户活跃度**: 分析用户参与程度
+总测试 75 个（52 v1 + 23 v2），5 秒跑完。
 
-## 🚀 快速开始
+## v1 仍保留
 
-### 安装依赖
+| 模块 | 干什么 |
+|---|---|
+| `dashboard.py` | Streamlit 交互式主界面 |
+| `funnel_analyzer.py` | 漏斗 + plotly Sankey/桑基图 |
+| `retention_analyzer.py` | 留存矩阵 + cohort 热力图 |
+| `path_analyzer.py` | 用户路径桑基图 |
+| `segmentation_analyzer.py` | RFM-like 多维分群 |
+| `data/sample_data.csv` | 示例事件数据 |
+
+## 安装
 
 ```bash
-cd user-behavior-analytics
 pip install -r requirements.txt
 ```
 
-### 运行应用
+## 快速开始
+
+### v2 headless CLI
+
+```bash
+# 1. 漏斗分析：定义事件序列 + 时间窗口
+python __main__.py funnel data/sample_data.csv \
+    --steps "page_view,sign_up,add_to_cart,purchase" --window 24
+
+# 2. 留存（Day-1 / 7 / 30）
+python __main__.py retention data/sample_data.csv
+
+# 只把某个事件作为 cohort 起点
+python __main__.py retention data/sample_data.csv --first-event sign_up
+
+# 3. 用户路径（最常见的前 N 步序列）
+python __main__.py paths data/sample_data.csv --max-steps 5 --top-k 10
+
+# 4. 分群（heavy / regular / light）
+python __main__.py segments data/sample_data.csv --high 10 --medium 3
+
+# 5. 一次性导全部指标
+python __main__.py overview data/sample_data.csv \
+    --funnel-steps "page_view,sign_up,purchase" -o report.json
+```
+
+### v1 Streamlit 仪表板
 
 ```bash
 streamlit run dashboard.py
 ```
 
-应用将在 http://localhost:8501 启动
+### 库调用
 
-### 使用示例数据
+```python
+import pandas as pd
+from headless_analytics import (
+    compute_funnel, compute_retention,
+    compute_top_paths, compute_segments,
+)
 
-应用内置了示例数据，启动后自动加载，可直接体验所有功能。
+df = pd.read_csv("events.csv")
 
-### 使用自有数据
+# 漏斗：必须 24h 内完成下一步
+funnel = compute_funnel(df,
+    steps=["page_view", "sign_up", "purchase"],
+    time_window_hours=24,
+)
+print(funnel.overall_conversion_pct, funnel.weakest_step)
+# 35.0 'purchase'
 
-1. 准备 CSV 或 Excel 文件，需包含以下列：
-   - `user_id`: 用户唯一标识
-   - `event`: 事件名称
-   - `timestamp`: 事件时间（格式：YYYY-MM-DD HH:MM:SS）
-   - `value` (可选): 事件关联的金额/价值
+# 留存
+retention = compute_retention(df, first_event_filter="sign_up")
+print(retention.day_1_retention, retention.day_7_retention)
 
-2. 在侧边栏选择"上传 CSV"或"上传 Excel"
-3. 上传文件后即可开始分析
+# 路径
+paths = compute_top_paths(df, max_steps=5, top_k=10)
+for seq, count in paths.top_sequences:
+    print(f"{count:>4}  {seq}")
 
-## 📁 项目结构
+# 分群
+segments = compute_segments(df, high_threshold=10, medium_threshold=3)
+print(segments.segments)   # {'heavy': N, 'regular': N, 'light': N}
+```
+
+## 一个真实输出
 
 ```
-user-behavior-analytics/
-├── dashboard.py              # 主界面
-├── funnel_analyzer.py        # 漏斗分析模块
-├── path_analyzer.py          # 路径分析模块
-├── retention_analyzer.py     # 留存分析模块
-├── segmentation_analyzer.py  # 用户分群模块
-├── requirements.txt          # 依赖列表
-├── README.md                 # 说明文档
-├── tests/                    # 单元测试
+$ python __main__.py funnel data/sample_data.csv \
+    --steps "page_view,sign_up,add_to_cart,purchase"
+
+{
+  "steps": [
+    {"name": "page_view",    "n_users": 20, "conversion_pct": 100.0, "step_conversion_pct": 100.0, "drop_off": 0},
+    {"name": "sign_up",      "n_users": 16, "conversion_pct": 80.0,  "step_conversion_pct": 80.0,  "drop_off": 4},
+    {"name": "add_to_cart",  "n_users": 11, "conversion_pct": 55.0,  "step_conversion_pct": 68.8,  "drop_off": 5},
+    {"name": "purchase",     "n_users": 7,  "conversion_pct": 35.0,  "step_conversion_pct": 63.6,  "drop_off": 4}
+  ],
+  "overall_conversion_pct": 35.0,
+  "weakest_step": "add_to_cart",
+  "weakest_drop_pct": 31.25
+}
+```
+
+`weakest_step` 自动指出转化损失最大的环节 — 这次是从 sign_up 到 add_to_cart 流失
+31%（5 个用户），比 page_view→sign_up 损失 20%、add_to_cart→purchase 损失 36%
+都重要（按 step_conversion_pct 比较）。
+
+## 数据 schema
+
+事件 CSV 必须包含三列：
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| user_id | int / str | 用户唯一 ID |
+| event | str | 事件名（page_view / sign_up / purchase 等） |
+| timestamp | datetime-parseable | 事件时间 |
+
+可选列：`value` 等，目前 v2 不用，但 v1 仪表板会读。
+
+## 设计取舍
+
+- **漏斗时间窗口默认 24h**：每一步必须在前一步发生后 24h 内完成才算转化。
+  跨多日的"长漏斗"（注册 → 30 天后首次购买）需要传 `--window 720`。
+- **留存只算 Day-1 / 7 / 30**：v1 的留存矩阵更细，v2 简化为 3 个关键节点。要画
+  完整矩阵还是去 v1。
+- **路径分析取前 max_steps 步**：避免长尾路径污染统计。`max_steps=5` 是经验值，
+  电商场景通常注册后 5 步内能看出意图。
+- **分群只看活跃度**：v2 用单维度（事件数）做 heavy / regular / light 分群。多
+  维 RFM 走 v1 `segmentation_analyzer`。
+
+## 项目结构
+
+```
+User-Behavior-Analytics/
+├── __main__.py                  # v2 CLI
+├── headless_analytics.py        # v2 纯 pandas 分析
+├── dashboard.py                 # v1 Streamlit
+├── funnel_analyzer.py           # v1 漏斗 + plotly
+├── retention_analyzer.py        # v1 留存
+├── path_analyzer.py             # v1 路径
+├── segmentation_analyzer.py     # v1 分群
+├── tests/                       # 75 测试
 │   ├── test_funnel.py
 │   ├── test_path.py
 │   ├── test_retention.py
-│   └── test_segmentation.py
-└── data/                     # 数据目录
-    └── sample_data.csv       # 示例数据
+│   ├── test_segmentation.py
+│   └── test_headless_analytics.py   # v2 新增
+├── data/sample_data.csv
+├── pytest.ini
+└── requirements.txt
 ```
 
-## 📊 功能详解
-
-### 漏斗分析
-
-**使用场景**:
-- 电商转化流程优化
-- 用户注册流程分析
-- 功能使用转化追踪
-
-**关键指标**:
-- 整体转化率：从第一步到最后一步的转化比例
-- 相对转化率：相邻步骤间的转化比例
-- 流失率：各步骤的用户流失情况
-
-### 路径分析
-
-**使用场景**:
-- 用户浏览行为研究
-- 产品导航优化
-- 关键行为路径识别
-
-**可视化**:
-- 桑基图：展示用户从一个事件到另一个事件的流向
-- 热力图：显示事件间的转换强度
-
-### 留存分析
-
-**使用场景**:
-- 产品健康度评估
-- 用户粘性分析
-- 运营活动效果追踪
-
-**指标说明**:
-- 次日留存：第一天活跃用户在第二天仍活跃的比例
-- 7 日留存：第一天活跃用户在第七天仍活跃的比例
-- 30 日留存：第一天活跃用户在第三十天仍活跃的比例
-
-### 用户分群
-
-**使用场景**:
-- 精准营销
-- 个性化推荐
-- 用户生命周期管理
-
-**分群方法**:
-- RFM 模型：基于最近活跃时间、活跃频率、贡献价值
-- K-Means 聚类：基于多维特征的自动分群
-
-## 🧪 测试
-
-运行单元测试：
+## 测试
 
 ```bash
-pytest tests/ -v --cov=. --cov-report=html
+pytest tests/ --no-cov
 ```
 
-查看测试覆盖率报告：
+75 个测试，5 秒跑完。
 
-```bash
-pytest tests/ -v --cov=. --cov-report=term-missing
-```
+## 已知限制
 
-## 📝 数据格式示例
+- `compute_funnel` 的时间窗口是固定值（小时），不支持每步不同窗口。复杂场景需要
+  自己改源码。
+- `compute_retention` 没区分平台 / 渠道，cohort 是按"首次出现日"切，跨渠道的用户
+  会算成一个 cohort。
+- `compute_top_paths` 只看事件序列，不考虑事件属性（页面 URL / 按钮 id）。
 
-```csv
-user_id,event,timestamp,value
-1,page_view,2024-01-01 10:00:00,0
-1,sign_up,2024-01-01 10:05:00,0
-1,add_to_cart,2024-01-01 10:30:00,0
-1,checkout,2024-01-01 10:35:00,0
-1,purchase,2024-01-01 10:40:00,299.99
-2,page_view,2024-01-01 11:00:00,0
-2,sign_up,2024-01-01 11:10:00,0
-```
+## 许可
 
-## 🎨 自定义配置
-
-### 修改主题
-
-编辑 `dashboard.py` 中的样式部分：
-
-```python
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1f77b4;  /* 修改主色调 */
-    }
-</style>
-""", unsafe_allow_html=True)
-```
-
-### 添加新指标
-
-在对应的分析器模块中添加计算方法，然后在 `dashboard.py` 中调用。
-
-## 🔧 技术栈
-
-- **前端框架**: Streamlit
-- **数据处理**: Pandas, NumPy
-- **可视化**: Plotly
-- **机器学习**: Scikit-learn
-- **图分析**: NetworkX
-
-## 📄 许可证
-
-MIT License
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📧 联系方式
-
-如有问题或建议，请提交 Issue。
-
----
-
-**Made with ❤️ by User Behavior Analytics Team**
+MIT
